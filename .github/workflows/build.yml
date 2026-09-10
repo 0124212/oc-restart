@@ -19,12 +19,20 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
-      # Unsigned IPA: install via AltStore/Sideloadly, or re-sign for TestFlight.
-      - run: flutter build ipa --no-codesign
+      # Unsigned IPA: Xcode can't export an .ipa without signing, so we
+      # package Runner.app into a Payload zip ourselves. Install the
+      # result via AltStore / Sideloadly, or re-sign for TestFlight.
+      - run: flutter build ios --release --no-codesign
+      - run: |
+          cd build/ios/iphoneos
+          rm -rf Payload oc_restart-unsigned.ipa
+          mkdir Payload
+          cp -r Runner.app Payload/
+          zip -qry oc_restart-unsigned.ipa Payload
       - uses: actions/upload-artifact@v4
         with:
           name: ios-unsigned-ipa
-          path: build/ios/ipa/*.ipa
+          path: build/ios/iphoneos/oc_restart-unsigned.ipa
 
   android:
     runs-on: ubuntu-latest
