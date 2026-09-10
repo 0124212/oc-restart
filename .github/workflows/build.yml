@@ -1,0 +1,45 @@
+# Builds oc_restart for iOS (unsigned IPA for sideloading/TestFlight upload)
+# + Android APK. iOS CANNOT build on Linux — Apple requires macOS + Xcode,
+# so this runs on a macOS runner. Push to GitHub and it builds automatically.
+name: build-ios-android
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      # Unsigned IPA: install via AltStore/Sideloadly, or re-sign for TestFlight.
+      - run: flutter build ipa --no-codesign
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned-ipa
+          path: build/ios/ipa/*.ipa
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+      - run: flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
