@@ -1,29 +1,7 @@
 import 'dart:async';
-
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-
-// Mirrors the ↺ restart button + status dots of https://junilab.xyz
-// (terminal-startpage index.html: restartOC() + SERVICE_URLS).
-const String kVizUiUrl = 'https://viz-ui.junilab.xyz';
-
-const Map<String, String> kServices = {
-  'vis-ui': 'https://viz-ui.junilab.xyz',
-  'memory': 'https://memory.junilab.xyz',
-  'voice': 'https://voice.junilab.xyz',
-  'gitea': 'https://gitea.junilab.xyz',
-  'kuma': 'https://kuma.junilab.xyz',
-  'n8n': 'https://n8n.junilab.xyz',
-  'dev': 'https://dev.junilab.xyz',
-  'kasmweb': 'https://desktop.junilab.xyz',
-  'pdf': 'https://pdf.junilab.xyz',
-  'memos': 'https://memos.junilab.xyz/',
-  'vikunja': 'https://vikunja.junilab.xyz/',
-  'dave': 'https://dave.junilab.xyz',
-  'ntfy': 'https://ntfy.junilab.xyz',
-  'radicale': 'https://radicale.junilab.xyz/',
-  'gatus': 'https://gatus.junilab.xyz',
-};
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 void main() => runApp(const OcRestartApp());
 
@@ -34,139 +12,273 @@ class OcRestartApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'OC Restart',
-      theme: ThemeData.dark(useMaterial3: true),
-      home: const RestartPage(),
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorSchemeSeed: Colors.teal,
+        useMaterial3: true,
+        brightness: Brightness.dark,
+      ),
+      home: const Dashboard(),
     );
   }
 }
 
-class RestartPage extends StatefulWidget {
-  const RestartPage({super.key});
+// ─── Sync Service (WebSocket) ────────────────────────────
+class SyncService {
+  static const _token = 'd204f2016b28c0c50c793df833c9be3d370662a5dcfc5c8ebedf110e034388a9';
+  static const _wsUrl = 'ws://100.115.178.90:4099?token=$_token';
 
+  WebSocketChannel? _ws;
+  final _controller = StreamController<Map<String, dynamic>>.broadcast();
+  Timer? _reconnect;
+  bool _connected = false;
+
+  Stream<Map<String, dynamic>> get stream => _controller.stream;
+  bool get connected => _connected;
+
+  void connect() {
+    _ws = WebSocketChannel.connect(Uri.parse(_wsUrl));
+    _ws!.sink.add(_token);
+
+    _ws!.stream.listen(
+      (data) {
+        _connected = true;
+        try {
+          _controller.add(jsonDecode(data));
+        } catch (_) {}
+      },
+      onDone: () {
+        _connected = false;
+        _scheduleReconnect();
+      },
+      onError: (_) {
+        _connected = false;
+        _scheduleReconnect();
+      },
+    );
+  }
+
+  void _scheduleReconnect() {
+    _reconnect?.cancel();
+    _reconnect = Timer(const Duration(seconds: 3), connect);
+  }
+
+  void restart(String target) {
+    _ws?.sink.add(jsonEncode({'type': 'restart', 'target': target}));
+  }
+
+  void dispose() {
+    _reconnect?.cancel();
+    _ws?.sink.close();
+    _controller.close();
+  }
+}
+
+// ─── Dashboard ───────────────────────────────────────────
+class Dashboard extends StatefulWidget {
+  const Dashboard({super.key});
   @override
-  State<RestartPage> createState() => _RestartPageState();
+  State<Dashboard> createState() => _DashboardState();
 }
 
-class _RestartPageState extends State<RestartPage> {
-  bool _busy = false;
-  String _status = 'Idle — press ↺ to ping OpenCode.';
-  final Map<String, bool?> _dots = {for (final k in kServices.keys) k: null};
-
-  Future<bool> _ping(String url) async {
-    try {
-      final r = await http.get(Uri.parse(url)).timeout(
-        const Duration(seconds: 10),
-      );
-      return r.statusCode < 500;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  // Same action as restartOC(): hit viz-ui, then refresh statuses.
-  Future<void> _restart() async {
-    if (_busy) return;
-    setState(() {
-      _busy = true;
-      _status = 'Pinging OpenCode…';
-    });
-    final sw = Stopwatch()..start();
-    final ok = await _ping(kVizUiUrl);
-    sw.stop();
-    if (mounted) {
-      setState(() {
-        _status = ok
-            ? 'OpenCode answered in ${sw.elapsedMilliseconds} ms — refreshing…'
-            : 'No answer from OpenCode (still restarting?).';
-      });
-    }
-    await _checkAll();
-    if (mounted) {
-      setState(() {
-        _busy = false;
-        if (ok) _status = 'Done — OpenCode answered in ${sw.elapsedMilliseconds} ms.';
-      });
-    }
-  }
-
-  Future<void> _checkAll() async {
-    final results = await Future.wait(
-      kServices.entries.map((e) async => MapEntry(e.key, await _ping(e.value))),
-    );
-    if (!mounted) return;
-    setState(() {
-      for (final r in results) {
-        _dots[r.key] = r.value;
-      }
-    });
-  }
+class _DashboardState extends State<Dashboard> {
+  final _sync = SyncService();
+  Map<String, dynamic>? _status;
+  List<dynamic> _services = [];
+  bool _connected = false;
 
   @override
   void initState() {
     super.initState();
-    _checkAll();
+    _sync.stream.listen((msg) {
+      if (msg['type'] == 'snapshot') {
+        setState(() {
+          _status = msg['status'];
+          _services = msg['services'] ?? [];
+          _connected = _sync.connected;
+        });
+      } else if (msg['type'] == 'restarted') {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${msg['target']} restarting…'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    });
+    _sync.connect();
+  }
+
+  @override
+  void dispose() {
+    _sync.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final up = _dots.values.where((v) => v == true).length;
+    final w = MediaQuery.of(context).size.width;
+    final cols = w > 900 ? 2 : 1;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('OC Restart ↺')),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: _busy ? null : _restart,
-                  icon: _busy
-                      ? const SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('↺', style: TextStyle(fontSize: 28)),
-                  label: const Text('Restart OpenCode',
-                      style: TextStyle(fontSize: 20)),
-                  style: ElevatedButton.styleFrom(
-                    minimumSize: const Size(260, 72),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(_status, textAlign: TextAlign.center),
-                const SizedBox(height: 24),
-                Text('Services up: $up / ${_dots.length}'),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  alignment: WrapAlignment.center,
-                  children: [
-                    for (final e in _dots.entries)
-                      Chip(
-                        avatar: Icon(
-                          Icons.circle,
-                          size: 12,
-                          color: e.value == null
-                              ? Colors.grey
-                              : (e.value! ? Colors.green : Colors.red),
-                        ),
-                        label: Text(e.key),
-                      ),
-                  ],
-                ),
-              ],
+      appBar: AppBar(
+        title: Row(
+          children: [
+            const Text('ak'),
+            const SizedBox(width: 8),
+            Icon(
+              _connected ? Icons.wifi : Icons.wifi_off,
+              color: _connected ? Colors.green : Colors.red,
+              size: 18,
             ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () => _sync.restart('opencode'),
+          ),
+        ],
+      ),
+      body: cols == 1 ? _buildList() : _buildGrid(cols),
+    );
+  }
+
+  Widget _buildList() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (_status != null) _buildStatusCard(),
+        const SizedBox(height: 12),
+        _buildRestartButton(),
+        const SizedBox(height: 12),
+        if (_services.isNotEmpty) _buildServicesCard(),
+      ],
+    );
+  }
+
+  Widget _buildGrid(int cols) {
+    return GridView.count(
+      crossAxisCount: 2,
+      padding: const EdgeInsets.all(16),
+      childAspectRatio: 1.6,
+      children: [
+        if (_status != null) _buildStatusCard(),
+        _buildRestartButton(),
+        if (_services.isNotEmpty) _buildServicesCard(),
+      ],
+    );
+  }
+
+  Widget _buildStatusCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Server', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Divider(),
+            _row('Uptime', _status!['uptime'] ?? '—'),
+            _row('CPU', '${_status!['load'] ?? '—'}  ·  ${_status!['temp'] ?? '—'}'),
+            _row('Memory', _status!['mem'] ?? '—'),
+            _row('Disk', _status!['disk'] ?? '—'),
+            _row('OpenCode', _status!['opencode'] ?? '—'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _row(String k, String v) {
+    final isUp = v == 'active' || v == 'running';
+    final isDown = v == 'inactive' || v == 'failed';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(k, style: const TextStyle(color: Colors.grey)),
+          isUp || isDown
+              ? Chip(
+                  label: Text(v, style: const TextStyle(fontSize: 12)),
+                  backgroundColor: isUp ? Colors.green.shade900 : Colors.red.shade900,
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                )
+              : Text(v, style: const TextStyle(fontWeight: FontWeight.w500)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRestartButton() {
+    return Card(
+      child: SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          onPressed: () => _sync.restart('opencode'),
+          icon: const Icon(Icons.restart_alt, size: 28),
+          label: const Text('Restart OpenCode Server', style: TextStyle(fontSize: 16)),
+          style: FilledButton.styleFrom(
+            padding: const EdgeInsets.symmetric(vertical: 16),
           ),
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _busy ? null : _checkAll,
-        tooltip: 'Refresh status',
-        child: const Icon(Icons.refresh),
+    );
+  }
+
+  Widget _buildServicesCard() {
+    final running = _services.where((s) => s['state'] == 'running').length;
+    final total = _services.length;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text('Services', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const Spacer(),
+                Chip(
+                  label: Text('$running/$total up', style: const TextStyle(fontSize: 12)),
+                  backgroundColor: running == total ? Colors.green.shade900 : Colors.orange.shade900,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+            const Divider(),
+            Expanded(
+              child: ListView.builder(
+                itemCount: _services.length,
+                itemBuilder: (ctx, i) {
+                  final s = _services[i];
+                  final isUp = s['state'] == 'running';
+                  return ListTile(
+                    dense: true,
+                    leading: Icon(
+                      isUp ? Icons.circle : Icons.circle_outlined,
+                      color: isUp ? Colors.green : Colors.red,
+                      size: 12,
+                    ),
+                    title: Text(s['name'], style: const TextStyle(fontSize: 14)),
+                    subtitle: Text(s['status'] ?? '', style: const TextStyle(fontSize: 11)),
+                    trailing: PopupMenuButton<String>(
+                      onSelected: (v) {
+                        if (v == 'restart') _sync.restart(s['name']);
+                      },
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(value: 'restart', child: Text('Restart')),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
