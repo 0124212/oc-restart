@@ -119,159 +119,244 @@ class _DashboardState extends State<Dashboard> {
   @override
   Widget build(BuildContext context) {
     final w = MediaQuery.of(context).size.width;
-    final cols = w > 900 ? 2 : 1;
+    final isWide = w > 900;
 
     return Scaffold(
       appBar: AppBar(
         title: Row(
           children: [
-            const Text('ak'),
-            const SizedBox(width: 8),
+            Text('ak', style: TextStyle(fontSize: isWide ? 28 : 22)),
+            const SizedBox(width: 12),
             Icon(
               _connected ? Icons.wifi : Icons.wifi_off,
               color: _connected ? Colors.green : Colors.red,
-              size: 18,
+              size: isWide ? 26 : 20,
             ),
+            const SizedBox(width: 8),
+            if (_connected)
+              Text('LIVE', style: TextStyle(color: Colors.green.shade300, fontSize: isWide ? 16 : 12, fontWeight: FontWeight.bold, letterSpacing: 2)),
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () => _sync.restart('opencode'),
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: FilledButton.icon(
+              onPressed: () => _sync.restart('opencode'),
+              icon: const Icon(Icons.restart_alt, size: 22),
+              label: const Text('Restart Server'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+            ),
           ),
         ],
       ),
-      body: cols == 1 ? _buildList() : _buildGrid(cols),
+      body: isWide ? _buildWideLayout() : _buildNarrowLayout(),
     );
   }
 
-  Widget _buildList() {
+  // ─── iPhone layout ───────────────────────────────────
+  Widget _buildNarrowLayout() {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        if (_status != null) _buildStatusCard(),
-        const SizedBox(height: 12),
-        _buildRestartButton(),
-        const SizedBox(height: 12),
-        if (_services.isNotEmpty) _buildServicesCard(),
+        if (_status != null) _buildStatusCard(fontSize: 16, padding: 20),
+        const SizedBox(height: 16),
+        _buildRestartButton(height: 64),
+        const SizedBox(height: 16),
+        if (_services.isNotEmpty) _buildServicesCard(fontSize: 15, padding: 20),
       ],
     );
   }
 
-  Widget _buildGrid(int cols) {
-    return GridView.count(
-      crossAxisCount: 2,
-      padding: const EdgeInsets.all(16),
-      childAspectRatio: 1.6,
-      children: [
-        if (_status != null) _buildStatusCard(),
-        _buildRestartButton(),
-        if (_services.isNotEmpty) _buildServicesCard(),
-      ],
-    );
-  }
-
-  Widget _buildStatusCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Server', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const Divider(),
-            _row('Uptime', _status!['uptime'] ?? '—'),
-            _row('CPU', '${_status!['load'] ?? '—'}  ·  ${_status!['temp'] ?? '—'}'),
-            _row('Memory', _status!['mem'] ?? '—'),
-            _row('Disk', _status!['disk'] ?? '—'),
-            _row('OpenCode', _status!['opencode'] ?? '—'),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _row(String k, String v) {
-    final isUp = v == 'active' || v == 'running';
-    final isDown = v == 'inactive' || v == 'failed';
+  // ─── iPad / desktop layout ───────────────────────────
+  Widget _buildWideLayout() {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      padding: const EdgeInsets.all(24),
+      child: Column(
         children: [
-          Text(k, style: const TextStyle(color: Colors.grey)),
-          isUp || isDown
-              ? Chip(
-                  label: Text(v, style: const TextStyle(fontSize: 12)),
-                  backgroundColor: isUp ? Colors.green.shade900 : Colors.red.shade900,
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                )
-              : Text(v, style: const TextStyle(fontWeight: FontWeight.w500)),
+          // Top row: status + restart
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(flex: 3, child: _buildStatusCard(fontSize: 22, padding: 28)),
+              const SizedBox(width: 24),
+              Expanded(flex: 2, child: _buildRestartButton(height: 280)),
+            ],
+          ),
+          const SizedBox(height: 24),
+          // Bottom row: services full width
+          Expanded(child: _buildServicesCard(fontSize: 18, padding: 28)),
         ],
       ),
     );
   }
 
-  Widget _buildRestartButton() {
+  // ─── Status Card ─────────────────────────────────────
+  Widget _buildStatusCard({required double fontSize, required double padding}) {
     return Card(
-      child: SizedBox(
-        width: double.infinity,
-        child: FilledButton.icon(
-          onPressed: () => _sync.restart('opencode'),
-          icon: const Icon(Icons.restart_alt, size: 28),
-          label: const Text('Restart OpenCode Server', style: TextStyle(fontSize: 16)),
-          style: FilledButton.styleFrom(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildServicesCard() {
-    final running = _services.where((s) => s['state'] == 'running').length;
-    final total = _services.length;
-    return Card(
+      elevation: 2,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.all(padding),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                const Text('Services', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Icon(Icons.dns, size: fontSize + 6, color: Colors.teal),
+                const SizedBox(width: 12),
+                Text('Server', style: TextStyle(fontSize: fontSize + 4, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            SizedBox(height: padding * 0.5),
+            _statRow('Uptime', _status!['uptime'] ?? '—', fontSize),
+            _statRow('CPU', '${_status!['load'] ?? '—'}  ·  ${_status!['temp'] ?? '—'}', fontSize),
+            _statRow('Memory', _status!['mem'] ?? '—', fontSize),
+            _statRow('Disk', _status!['disk'] ?? '—', fontSize),
+            _statRow('OpenCode', _status!['opencode'] ?? '—', fontSize, isStatus: true),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _statRow(String label, String value, double fontSize, {bool isStatus = false}) {
+    final isUp = value == 'active' || value == 'running';
+    final isDown = value == 'inactive' || value == 'failed';
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: fontSize * 0.35),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: TextStyle(color: Colors.grey, fontSize: fontSize - 2)),
+          SizedBox(width: 16),
+          Flexible(
+            child: isStatus
+                ? Container(
+                    padding: EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: isUp ? Colors.green.shade900 : isDown ? Colors.red.shade900 : Colors.grey.shade800,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(value, style: TextStyle(fontSize: fontSize - 3, fontWeight: FontWeight.w600)),
+                  )
+                : Text(value, style: TextStyle(fontWeight: FontWeight.w500, fontSize: fontSize - 2)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── Restart Button ──────────────────────────────────
+  Widget _buildRestartButton({required double height}) {
+    return Card(
+      elevation: 2,
+      child: SizedBox(
+        height: height,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.restart_alt, size: height > 100 ? 56 : 36, color: Colors.teal),
+              const SizedBox(height: 12),
+              Text(
+                'Restart',
+                style: TextStyle(fontSize: height > 100 ? 22 : 16, fontWeight: FontWeight.bold),
+              ),
+              Text(
+                'OpenCode Server',
+                style: TextStyle(fontSize: height > 100 ? 16 : 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: height > 100 ? 56 : 44,
+                child: FilledButton.icon(
+                  onPressed: () => _sync.restart('opencode'),
+                  icon: const Icon(Icons.power_settings_new, size: 24),
+                  label: const Text('RESTART', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 2)),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.teal.shade700,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ─── Services Card ───────────────────────────────────
+  Widget _buildServicesCard({required double fontSize, required double padding}) {
+    final running = _services.where((s) => s['state'] == 'running').length;
+    final total = _services.length;
+
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: EdgeInsets.all(padding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.apps, size: fontSize + 4, color: Colors.teal),
+                const SizedBox(width: 12),
+                Text('Services', style: TextStyle(fontSize: fontSize + 4, fontWeight: FontWeight.bold)),
                 const Spacer(),
-                Chip(
-                  label: Text('$running/$total up', style: const TextStyle(fontSize: 12)),
-                  backgroundColor: running == total ? Colors.green.shade900 : Colors.orange.shade900,
-                  visualDensity: VisualDensity.compact,
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: running == total ? Colors.green.shade900 : Colors.orange.shade900,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text('$running/$total up', style: TextStyle(fontSize: fontSize - 2, fontWeight: FontWeight.w600)),
                 ),
               ],
             ),
+            SizedBox(height: padding * 0.4),
             const Divider(),
+            SizedBox(height: padding * 0.2),
             Expanded(
               child: ListView.builder(
                 itemCount: _services.length,
                 itemBuilder: (ctx, i) {
                   final s = _services[i];
                   final isUp = s['state'] == 'running';
-                  return ListTile(
-                    dense: true,
-                    leading: Icon(
-                      isUp ? Icons.circle : Icons.circle_outlined,
-                      color: isUp ? Colors.green : Colors.red,
-                      size: 12,
-                    ),
-                    title: Text(s['name'], style: const TextStyle(fontSize: 14)),
-                    subtitle: Text(s['status'] ?? '', style: const TextStyle(fontSize: 11)),
-                    trailing: PopupMenuButton<String>(
-                      onSelected: (v) {
-                        if (v == 'restart') _sync.restart(s['name']);
-                      },
-                      itemBuilder: (_) => [
-                        const PopupMenuItem(value: 'restart', child: Text('Restart')),
-                      ],
+                  return Padding(
+                    padding: EdgeInsets.symmetric(vertical: 6),
+                    child: ListTile(
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12),
+                      leading: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: isUp ? Colors.green : Colors.red,
+                          boxShadow: [
+                            BoxShadow(
+                              color: (isUp ? Colors.green : Colors.red).withValues(alpha: 0.4),
+                              blurRadius: 6,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                      ),
+                      title: Text(s['name'], style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w600)),
+                      subtitle: Text(s['status'] ?? '', style: TextStyle(fontSize: fontSize - 4, color: Colors.grey)),
+                      trailing: IconButton(
+                        icon: Icon(Icons.restart_alt, size: fontSize + 2, color: Colors.teal),
+                        onPressed: () => _sync.restart(s['name']),
+                        tooltip: 'Restart ${s['name']}',
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.teal.withValues(alpha: 0.1),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
                     ),
                   );
                 },
