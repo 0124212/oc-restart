@@ -32,11 +32,13 @@ class SyncService {
   final _controller = StreamController<Map<String, dynamic>>.broadcast();
   Timer? _reconnect;
   bool _connected = false;
+  bool _disposed = false;
 
   Stream<Map<String, dynamic>> get stream => _controller.stream;
   bool get connected => _connected;
 
   void connect() {
+    if (_disposed) return;
     _ws = WebSocketChannel.connect(Uri.parse(_wsUrl));
     _ws!.sink.add(_token);
 
@@ -49,11 +51,11 @@ class SyncService {
       },
       onDone: () {
         _connected = false;
-        _scheduleReconnect();
+        if (!_disposed) _scheduleReconnect();
       },
       onError: (_) {
         _connected = false;
-        _scheduleReconnect();
+        if (!_disposed) _scheduleReconnect();
       },
     );
   }
@@ -68,6 +70,7 @@ class SyncService {
   }
 
   void dispose() {
+    _disposed = true;
     _reconnect?.cancel();
     _ws?.sink.close();
     _controller.close();
@@ -163,7 +166,7 @@ class _DashboardState extends State<Dashboard> {
       children: [
         if (_status != null) _buildStatusCard(fontSize: 16, padding: 20),
         const SizedBox(height: 16),
-        _buildRestartButton(height: 64),
+        _buildRestartButton(),
         const SizedBox(height: 16),
         if (_services.isNotEmpty) _buildServicesCard(fontSize: 15, padding: 20),
       ],
@@ -249,43 +252,52 @@ class _DashboardState extends State<Dashboard> {
   }
 
   // ─── Restart Button ──────────────────────────────────
-  Widget _buildRestartButton({required double height}) {
+  Widget _buildRestartButton({double? height}) {
     return Card(
       elevation: 2,
-      child: SizedBox(
-        height: height,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.restart_alt, size: height > 100 ? 56 : 36, color: Colors.teal),
-              const SizedBox(height: 12),
-              Text(
-                'Restart',
-                style: TextStyle(fontSize: height > 100 ? 22 : 16, fontWeight: FontWeight.bold),
-              ),
-              Text(
-                'OpenCode Server',
-                style: TextStyle(fontSize: height > 100 ? 16 : 13, color: Colors.grey),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                height: height > 100 ? 56 : 44,
-                child: FilledButton.icon(
-                  onPressed: () => _sync.restart('opencode'),
-                  icon: const Icon(Icons.power_settings_new, size: 24),
-                  label: const Text('RESTART', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 2)),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.teal.shade700,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-              ),
-            ],
+      child: height != null
+          ? SizedBox(
+              height: height,
+              child: _buildRestartContent(isCompact: false),
+            )
+          : _buildRestartContent(isCompact: true),
+    );
+  }
+
+  Widget _buildRestartContent({required bool isCompact}) {
+    return Padding(
+      padding: EdgeInsets.all(isCompact ? 16 : 24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.restart_alt, size: isCompact ? 36 : 56, color: Colors.teal),
+          SizedBox(height: isCompact ? 8 : 12),
+          Text(
+            'Restart',
+            style: TextStyle(fontSize: isCompact ? 16 : 22, fontWeight: FontWeight.bold),
           ),
-        ),
+          Text(
+            'OpenCode Server',
+            style: TextStyle(fontSize: isCompact ? 13 : 16, color: Colors.grey),
+          ),
+          SizedBox(height: isCompact ? 12 : 16),
+          SizedBox(
+            width: double.infinity,
+            height: isCompact ? 48 : 56,
+            child: FilledButton.icon(
+              onPressed: () => _sync.restart('opencode'),
+              icon: const Icon(Icons.power_settings_new, size: 24),
+              label: Text(
+                'RESTART',
+                style: TextStyle(fontSize: isCompact ? 16 : 18, fontWeight: FontWeight.bold, letterSpacing: 2),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.teal.shade700,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
